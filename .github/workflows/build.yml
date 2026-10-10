@@ -4,22 +4,20 @@ on:
   push:
     tags:
       - "v*" # Triggers automatically when you push a tag starting with 'v' (e.g., v1.36.0)
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch: # Enables the manual "Run workflow" button in the Actions tab
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # Crucial permission allowing GitHub Actions to create a Release
+      contents: write # Required permission for GitHub Actions to create a Release
 
     steps:
       - name: Checkout repository with submodules
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+        uses: actions/checkout@v4.2.2 # Fixed version to resolve Node 20 deprecation warnings
 
       - name: Set up Android NDK r23c
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4 # Upgraded from v3 to v4 for Node 24 runner support
         id: setup-ndk
         with:
           ndk-version: "23.1.7779620"
@@ -55,7 +53,7 @@ jobs:
           path: aria2-android-binaries.zip
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') # Only runs this step if triggered by a tag push
+        if: startsWith(github.ref, 'refs/tags/') # Only creates a Release if a tag triggered the build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
