@@ -13,11 +13,16 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout repository with submodules
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-        fetch-depth: 0
+    # Bypasses actions/checkout entirely to eliminate the Node.js 20 runner warning
+    # Clones the repository and all nested submodules natively using the system Git
+    - name: Native Git Checkout with Submodules
+      run: |
+        git clone --recurse-submodules https://github.com{{ github.repository }}.git .
+        if [ "${{ github.event_name }}" = "push" ]; then
+          git checkout ${{ github.ref }}
+        else
+          git checkout ${{ github.sha }}
+        fi
 
     - name: Install System Compilation Dependencies
       run: |
@@ -34,18 +39,24 @@ jobs:
       run: |
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
+    - name: Force Fix Autotools Macro Lookups
+      run: |
+        echo "Applying emergency macro patches..."
+        # Finds every shell script in the repo and forces autoreconf to include the 'm4' directory
+        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -i/autoreconf -i -I m4 -I .\/m4/g' {} +
+        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -f -i/autoreconf -f -i -I m4 -I .\/m4/g' {} +
+        
+        # Ensures that a local m4 directory physically exists in both the root and the aria2 folder
+        mkdir -p m4 aria2/m4
+        if [ -d "aria2/m4" ]; then
+          cp -r aria2/m4/* m4/ 2>/dev/null || true
+          cp -r m4/* aria2/m4/ 2>/dev/null || true
+        fi
+
     - name: Run Build Script
       run: |
-        # 1. Create missing macro directories so aclocal doesn't crash
-        mkdir -p m4 aria2/m4
-        
-        # 2. Tell the system toolchain exactly where the custom macro scripts live globally
-        export ACLOCAL_PATH="$(pwd)/aria2/m4:$(pwd)/m4:/usr/share/aclocal"
-        
-        # 3. Fix the build script to use the valid directory tree structure
-        sed -i 's/autoreconf -i/autoreconf -i -I m4/g' build_all.sh 2>/dev/null || true
-        
         chmod +x build_all.sh
+        export ACLOCAL_PATH="$(pwd)/aria2/m4:$(pwd)/m4:/usr/share/aclocal"
         export CONFIG_SHELL=/bin/bash
         ./build_all.sh
 
