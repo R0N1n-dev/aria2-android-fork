@@ -13,16 +13,15 @@ jobs:
       contents: write
 
     steps:
-    # Bypasses actions/checkout entirely to eliminate the Node.js 20 runner warning
-    # Clones the repository and all nested submodules natively using the system Git
-    - name: Native Git Checkout with Submodules
+    - name: Checkout base repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Pulls full history securely without breaking git targets
+
+    - name: Initialize and Pull Submodules Natively
       run: |
-        git clone --recurse-submodules https://github.com{{ github.repository }}.git .
-        if [ "${{ github.event_name }}" = "push" ]; then
-          git checkout ${{ github.ref }}
-        else
-          git checkout ${{ github.sha }}
-        fi
+        # Natively pull down dependencies to avoid directory metadata corruption
+        git submodule update --init --recursive
 
     - name: Install System Compilation Dependencies
       run: |
@@ -39,19 +38,19 @@ jobs:
       run: |
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
-    - name: Force Fix Autotools Macro Lookups
+    - name: Force Patch Autotools Macro Lookups
       run: |
-        echo "Applying emergency macro patches..."
-        # Finds every shell script in the repo and forces autoreconf to include the 'm4' directory
-        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -i/autoreconf -i -I m4 -I .\/m4/g' {} +
-        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -f -i/autoreconf -f -i -I m4 -I .\/m4/g' {} +
-        
-        # Ensures that a local m4 directory physically exists in both the root and the aria2 folder
+        echo "Applying macro directory inclusion rules..."
+        # Physically link macro folders together to resolve the ARIA2_ARG_WITH(libuv) build failure
         mkdir -p m4 aria2/m4
         if [ -d "aria2/m4" ]; then
           cp -r aria2/m4/* m4/ 2>/dev/null || true
           cp -r m4/* aria2/m4/ 2>/dev/null || true
         fi
+        
+        # Hardcode the include path flag into every single compile initialization file inside the workspace
+        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -i/autoreconf -i -I m4/g' {} +
+        find . -name "*.sh" -type f -exec sed -i 's/autoreconf -f -i/autoreconf -f -i -I m4/g' {} +
 
     - name: Run Build Script
       run: |
