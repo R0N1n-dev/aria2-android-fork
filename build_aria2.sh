@@ -6,9 +6,6 @@ LIBS_DIR=$(pwd)/libs
 INSTALL_DIR=$(pwd)/bin
 mkdir -p $INSTALL_DIR
 
-pushd aria2
-autoreconf -i
-
 print_help()
 {
   __text="
@@ -27,6 +24,39 @@ if [ "$1" == "--help" ]
 then
   print_help
   exit
+fi
+
+pushd aria2
+
+# Regenerate autotools from scratch and fail fast if the macro isn't expanded
+echo "----- Regenerating aria2 autotools -----"
+rm -rf autom4te.cache aclocal.m4 configure
+
+AUTORECONF_INCLUDES="-I m4"
+macro_def_file=$(grep -rlE 'AC_DEFUN\(\[?ARIA2_ARG_WITH' --include='*.m4' --include='configure.ac' . | head -n 1 || true)
+if [ -z "$macro_def_file" ]
+then
+  echo "ERROR: no definition of ARIA2_ARG_WITH found anywhere in the aria2 source tree."
+  echo "The aria2 submodule is likely pinned to a commit that does not match its configure.ac."
+  git log -1 --oneline || true
+  ls -la m4 || true
+  grep -rn "ARIA2_ARG_WITH" configure.ac | head -n 5 || true
+  exit 1
+fi
+echo "ARIA2_ARG_WITH is defined in: $macro_def_file"
+macro_def_dir=$(dirname "$macro_def_file")
+if [ "$macro_def_dir" != "." ] && [ "$macro_def_dir" != "./m4" ]
+then
+  AUTORECONF_INCLUDES="$AUTORECONF_INCLUDES -I $macro_def_dir"
+fi
+
+autoreconf -fiv $AUTORECONF_INCLUDES
+
+if grep -qE '^[[:space:]]*ARIA2_ARG_WITH\(' configure
+then
+  echo "ERROR: configure still contains unexpanded ARIA2_ARG_WITH calls."
+  grep -nE 'ARIA2_ARG_WITH\(' configure | head -n 10
+  exit 1
 fi
 
 # check for existence of configure, and Makefile
@@ -109,7 +139,7 @@ do
     install_dir=$INSTALL_DIR/x86_64
     CFLAGS="${CFLAGS} -march=x86-64 -msse4.2 -mpopcnt -m64 -mtune=intel"
   fi
-  
+
   echo ""
   echo "cc_prefix           = $cc_prefix"
   echo "support_prefix      = $support_prefix"
@@ -117,7 +147,7 @@ do
   echo "install_dir         = $install_dir"
   echo "CFLAGS              = $CFLAGS"
   echo ""
-  
+
   export AR=$TOOLCHAIN/bin/llvm-ar
   export CC=$TOOLCHAIN/bin/${cc_prefix}clang
   export AS=$CC
@@ -129,7 +159,7 @@ do
   configure_params=""
   make_params=""
   if [ "$silent" == "true" ]
-  then 
+  then
     make_params="-s V=0"
     configure_params="--silent"
   fi
@@ -156,7 +186,7 @@ do
     LDFLAGS="-fPIE -pie -L$LIBS_TARGET_DIR/lib -static-libstdc++ -Wl,-z,max-page-size=16384" \
     PKG_CONFIG_LIBDIR="$LIBS_TARGET_DIR/lib/pkgconfig" || exit
 
-    
+
   make $make_params clean || exit
   make -j `nproc` $make_params || exit
   make install || exit
