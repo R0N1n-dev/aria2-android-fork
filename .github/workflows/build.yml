@@ -3,89 +3,91 @@ name: Build and Release aria2 for Android
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - "v*"
+  workflow_dispatch: # Allows manual trigger from the Actions tab
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
     permissions:
-      contents: write
+      contents: write # Required permission for GitHub Actions to create a Release
 
     steps:
-    - name: Checkout with submodules
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        submodules: recursive
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Show submodule state
-      run: |
-        git submodule status --recursive
-        echo "--- aria2/m4 ---"
-        ls -la aria2/m4 || true
-        echo "--- ARIA2_ARG_WITH definition ---"
-        grep -rn "ARIA2_ARG_WITH" aria2/m4 aria2/configure.ac | head -n 10 || true
+      - name: Initialize and Update Submodules
+        run: |
+          git submodule update --init --recursive
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y autopoint gettext build-essential pkg-config \
-          autoconf automake libtool libtool-bin texinfo tcl-dev \
-          autoconf-archive zip
+      - name: Restore aria2 m4 macros if missing
+        run: |
+          # Pull down macro script frameworks from upstream if folder layout is corrupted
+          if ! grep -rqE 'ARIA2_ARG_WITH' aria2/m4 2>/dev/null; then
+            echo "aria2/m4 missing or incomplete, pulling from upstream..."
+            git clone --depth 1 https://github.com/aria2/aria2.git /tmp/aria2-upstream
+            mkdir -p aria2/m4
+            cp -r /tmp/aria2-upstream/m4/. aria2/m4/
+          fi
+          echo "Verifying available macro folder keys:"
+          ls aria2/m4 | head -n 5
 
-    - name: Set up Android SDK and NDK
-      uses: android-actions/setup-android@v4
-      with:
-        packages: 'ndk;23.1.7779620 platform-tools'
+      - name: Install System Compilation Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autopoint gettext build-essential pkg-config \
+            autoconf automake libtool libtool-bin texinfo tcl-dev
 
-    - name: Map Android NDK home path
-      run: |
-        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
+      - name: Set up Android SDK & NDK r23c
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;23.1.7779620 platform-tools"
 
-    - name: Run build script
-      run: |
-        chmod +x build_all.sh build_aria2.sh build_openssl.sh build_libssh2.sh androidbuildlib 2>/dev/null || true
-        ./build_all.sh
+      - name: Map Android NDK Home Path
+        run: |
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
-    - name: Strip debug symbols
-      run: |
-        STRIP_TOOL=$(find "${ANDROID_NDK_HOME}" -name llvm-strip -type f | head -n 1)
-        if [ -z "$STRIP_TOOL" ]; then
-          echo "llvm-strip not found, skipping strip"
-        else
-          find bin -type f -name aria2c -exec "$STRIP_TOOL" --strip-unneeded {} +
-          echo "Stripping complete"
-        fi
+      - name: Run Build Script
+        env:
+          # Silences secondary legacy warnings regarding execution loops on the host machine
+          ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+        run: |
+          chmod +x build_all.sh
 
-    - name: Zip binaries for release
-      run: |
-        zip -r aria2-android-binaries.zip bin/
+          # Inject standard structural search flags to the global autotools layer
+          export ACLOCAL_PATH="$(pwd)/aria2/m4:$(pwd)/m4:/usr/share/aclocal"
+          export CONFIG_SHELL=/bin/bash
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: aria2-android-binaries
-        path: aria2-android-binaries.zip
+          ./build_all.sh
 
-    - name: Upload logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          aria2/config.log
-          aria2/configure.ac
-          aria2/m4/
-          c-ares/config.log
-        if-no-files-found: ignore
+      - name: Strip Debug Symbols
+        run: |
+          echo "Locating NDK strip tool..."
+          STRIP_TOOL=$(find ${ANDROID_NDK_HOME} -name llvm-strip -type f | head -n 1)
+          if [ -z "$STRIP_TOOL" ]; then
+            echo "Warning: llvm-strip not found. Skipping stripping step."
+          else
+            find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
+            echo "Stripping complete!"
+          fi
 
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/')
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
-          --title "aria2 Android Binaries ${{ github.ref_name }}" \
-          --notes "Cross-compiled, stripped aria2 binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23b."
+      - name: Zip Binaries for Release
+        run: |
+          zip -r aria2-android-binaries.zip bin/
+
+      - name: Upload Artifact (Backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria2-android-binaries
+          path: aria2-android-binaries.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
+            --title "aria2 Android Binaries ${{ github.ref_name }}" \
+            --notes "Automated optimized and stripped cross-compiled binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23c."
