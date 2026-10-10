@@ -3,7 +3,7 @@ name: Build and Release aria2 for Android
 on:
   push:
     tags:
-      - "v*" # Triggers automatically when you push a tag starting with 'v' (e.g., v1.36.0)
+      - 'v*' # Triggers automatically when you push a tag starting with 'v' (e.g., v1.36.0)
   workflow_dispatch: # Enables the manual "Run workflow" button in the Actions tab
 
 jobs:
@@ -13,50 +13,55 @@ jobs:
       contents: write # Required permission for GitHub Actions to create a Release
 
     steps:
-      - name: Checkout repository with submodules
-        uses: actions/checkout@v4.2.2 # Fixed version to resolve Node 20 deprecation warnings
+    - name: Checkout repository with submodules
+      uses: actions/checkout@v4.2.2 # Fixed version to resolve Node 20 deprecation warnings
 
-      - name: Set up Android NDK r23c
-        uses: android-actions/setup-android@v4 # Upgraded from v3 to v4 for Node 24 runner support
-        id: setup-ndk
-        with:
-          ndk-version: "23.1.7779620"
+    - name: Set up Android SDK & NDK r23c
+      uses: android-actions/setup-android@v4 # Upgraded for Node 24 runner support
+      with:
+        # Pass the exact NDK version package name to the underlying SDK manager tools
+        packages: 'ndk;23.1.7779620 platform-tools'
 
-      - name: Run Build Script
-        run: |
-          chmod +x build_all.sh
-          ./build_all.sh
+    - name: Map Android NDK Home Path
+      run: |
+        # Manually link the NDK path into the expected global environment parameter
+        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
-      - name: Strip Debug Symbols
-        run: |
-          echo "Locating NDK strip tool..."
-          # Finds the llvm-strip tool inside the installed r23c NDK directory
-          STRIP_TOOL=$(find ${{ steps.setup-ndk.outputs.ndk-path }} -name llvm-strip -type f | head -n 1)
+    - name: Run Build Script
+      run: |
+        chmod +x build_all.sh
+        ./build_all.sh
 
-          if [ -z "$STRIP_TOOL" ]; then
-            echo "Warning: llvm-strip not found. Skipping stripping step."
-          else
-            echo "Using strip tool: $STRIP_TOOL"
-            # Find all executable binaries inside the bin folder and strip them
-            find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
-            echo "Stripping complete!"
-          fi
+    - name: Strip Debug Symbols
+      run: |
+        echo "Locating NDK strip tool..."
+        # Finds the llvm-strip tool inside the downloaded NDK directory framework
+        STRIP_TOOL=$(find ${ANDROID_NDK_HOME} -name llvm-strip -type f | head -n 1)
+        
+        if [ -z "$STRIP_TOOL" ]; then
+          echo "Warning: llvm-strip not found. Skipping stripping step."
+        else
+          echo "Using strip tool: $STRIP_TOOL"
+          # Find all executable binaries inside the bin folder and strip them
+          find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
+          echo "Stripping complete!"
+        fi
 
-      - name: Zip Binaries for Release
-        run: |
-          zip -r aria2-android-binaries.zip bin/
+    - name: Zip Binaries for Release
+      run: |
+        zip -r aria2-android-binaries.zip bin/
 
-      - name: Upload Artifact (Backup)
-        uses: actions/upload-artifact@v4
-        with:
-          name: aria2-android-binaries
-          path: aria2-android-binaries.zip
+    - name: Upload Artifact (Backup)
+      uses: actions/upload-artifact@v4
+      with:
+        name: aria2-android-binaries
+        path: aria2-android-binaries.zip
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') # Only creates a Release if a tag triggered the build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
-            --title "aria2 Android Binaries ${{ github.ref_name }}" \
-            --notes "Automated optimized and stripped cross-compiled binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23c."
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/') # Only creates a Release if a tag triggered the build
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
+          --title "aria2 Android Binaries ${{ github.ref_name }}" \
+          --notes "Automated optimized and stripped cross-compiled binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23c."
