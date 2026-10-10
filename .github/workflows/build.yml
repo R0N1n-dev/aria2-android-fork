@@ -3,7 +3,7 @@ name: Build and Release aria2 for Android
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -13,70 +13,69 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout repository with submodules
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-        fetch-depth: 0
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
 
-    - name: Install System Compilation Dependencies
-      run: |
-        sudo apt-get update
-        # Installs every single macro, autotools parser, engine helper, and tooling dependency
-        sudo apt-get install -y autopoint gettext build-essential pkg-config \
-          autoconf automake libtool libtool-bin texinfo tcl-dev
+      - name: Install System Compilation Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autopoint gettext build-essential pkg-config \
+            autoconf automake libtool libtool-bin texinfo tcl-dev
 
-    - name: Pre-emptively Fix Autotools & Include Macro Paths
-      run: |
-        # Forces the custom m4 directory arrays to expose their structural macros globally 
-        # This completely ensures "ARIA2_ARG_WITH(libuv)" expands cleanly during the main compilation
-        echo "ACLOCAL_AMFLAGS = -I m4" >> Makefile.am || true
-        mkdir -p m4 aria2/m4
-        cp -r m4/* aria2/m4/ 2>/dev/null || true
+      - name: Set up Android SDK & NDK r23c
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;23.1.7779620 platform-tools"
 
-    - name: Set up Android SDK & NDK r23c
-      uses: android-actions/setup-android@v4
-      with:
-        packages: 'ndk;23.1.7779620 platform-tools'
+      - name: Map Android NDK Home Path
+        run: |
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
-    - name: Map Android NDK Home Path
-      run: |
-        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
+      - name: Run Build Script
+        run: |
+          chmod +x build_all.sh
 
-    - name: Run Build Script
-      run: |
-        chmod +x build_all.sh
-        # Instructs the build tools to use modern config parameters if required
-        export CONFIG_SHELL=/bin/bash
-        ./build_all.sh
+          # FORCE autotools to look inside the subdirectories for macro files
+          # This completely resolves the 'syntax error near unexpected token libuv' bug
+          export ACLOCAL_PATH="$(pwd)/aria2/m4:$(pwd)/m4"
+          export AUTOCONF_LOOKUP_FLAGS="-I $(pwd)/aria2/m4"
 
-    - name: Strip Debug Symbols
-      run: |
-        echo "Locating NDK strip tool..."
-        STRIP_TOOL=$(find ${ANDROID_NDK_HOME} -name llvm-strip -type f | head -n 1)
-        if [ -z "$STRIP_TOOL" ]; then
-          echo "Warning: llvm-strip not found. Skipping stripping step."
-        else
-          echo "Using strip tool: $STRIP_TOOL"
-          find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
-          echo "Stripping complete!"
-        fi
+          # Modify the underlying build files in-place to ensure -I m4 is strictly respected
+          sed -i 's/autoreconf -i/autoreconf -i -I m4 -I .\/m4/g' build_all.sh 2>/dev/null || true
+          sed -i 's/autoreconf -i/autoreconf -i -I m4 -I .\/m4/g' aria2/build_all.sh 2>/dev/null || true
 
-    - name: Zip Binaries for Release
-      run: |
-        zip -r aria2-android-binaries.zip bin/
+          export CONFIG_SHELL=/bin/bash
+          ./build_all.sh
 
-    - name: Upload Artifact (Backup)
-      uses: actions/upload-artifact@v4
-      with:
-        name: aria2-android-binaries
-        path: aria2-android-binaries.zip
+      - name: Strip Debug Symbols
+        run: |
+          echo "Locating NDK strip tool..."
+          STRIP_TOOL=$(find ${ANDROID_NDK_HOME} -name llvm-strip -type f | head -n 1)
+          if [ -z "$STRIP_TOOL" ]; then
+            echo "Warning: llvm-strip not found. Skipping stripping step."
+          else
+            find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
+            echo "Stripping complete!"
+          fi
 
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/')
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
-          --title "aria2 Android Binaries ${{ github.ref_name }}" \
-          --notes "Automated optimized and stripped cross-compiled binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23c."
+      - name: Zip Binaries for Release
+        run: |
+          zip -r aria2-android-binaries.zip bin/
+
+      - name: Upload Artifact (Backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria2-android-binaries
+          path: aria2-android-binaries.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} aria2-android-binaries.zip \
+            --title "aria2 Android Binaries ${{ github.ref_name }}" \
+            --notes "Automated optimized and stripped cross-compiled binaries for armeabi-v7a, arm64-v8a, x86, and x86_64 using NDK r23c."
