@@ -14,12 +14,13 @@ jobs:
 
     steps:
     - name: Checkout repository with submodules
-      uses: actions/checkout@v4.2.2 # Fixed version to resolve Node 20 deprecation warnings
+      uses: actions/checkout@v4 # Uses the latest v4 release that resolves Node 20 runtime alerts
+      with:
+        submodules: recursive
 
     - name: Set up Android SDK & NDK r23c
       uses: android-actions/setup-android@v4 # Upgraded for Node 24 runner support
       with:
-        # Pass the exact NDK version package name to the underlying SDK manager tools
         packages: 'ndk;23.1.7779620 platform-tools'
 
     - name: Map Android NDK Home Path
