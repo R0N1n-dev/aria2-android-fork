@@ -3,23 +3,38 @@ name: Build and Release aria2 for Android
 on:
   push:
     tags:
-      - 'v*' # Triggers automatically when you push a tag starting with 'v'
-  workflow_dispatch: # Enables the manual "Run workflow" button in the Actions tab
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # Required permission for GitHub Actions to create a Release
+      contents: write
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4 # Reverted to valid v4 version
+      uses: actions/checkout@v4
 
-    - name: Initialize and Update Submodules
+    - name: Install System Compilation Dependencies
       run: |
-        # Manually force-initialize all submodules to avoid action parameter failures
-        git submodule update --init --recursive
+        sudo apt-get update
+        # Installs autopoint, gettext, and basic building infrastructure required by autoreconf
+        sudo apt-get install -y autopoint gettext build-essential pkg-config
+
+    - name: Force Download Missing Submodule Dependencies
+      run: |
+        echo "Checking and resolving submodules manually..."
+        
+        # Fix c-ares dependency if folder is empty or missing
+        if [ ! -d "c-ares" ] || [ -z "$(ls -A c-ares 2>/dev/null)" ]; then
+          echo "c-ares is missing. Fetching source archive..."
+          rm -rf c-ares
+          curl -L https://github.com -o c-ares.tar.gz
+          mkdir c-ares
+          tar -xzf c-ares.tar.gz -C c-ares --strip-components=1
+          rm c-ares.tar.gz
+        fi
 
     - name: Set up Android SDK & NDK r23c
       uses: android-actions/setup-android@v4
@@ -28,7 +43,6 @@ jobs:
 
     - name: Map Android NDK Home Path
       run: |
-        # Links the newly installed SDK path into the required global parameters
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/23.1.7779620" >> $GITHUB_ENV
 
     - name: Run Build Script
@@ -40,11 +54,9 @@ jobs:
       run: |
         echo "Locating NDK strip tool..."
         STRIP_TOOL=$(find ${ANDROID_NDK_HOME} -name llvm-strip -type f | head -n 1)
-        
         if [ -z "$STRIP_TOOL" ]; then
           echo "Warning: llvm-strip not found. Skipping stripping step."
         else
-          echo "Using strip tool: $STRIP_TOOL"
           find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
           echo "Stripping complete!"
         fi
