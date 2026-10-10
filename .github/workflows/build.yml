@@ -13,28 +13,26 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repository with submodules
       uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
 
     - name: Install System Compilation Dependencies
       run: |
         sudo apt-get update
-        # Installs autopoint, gettext, and basic building infrastructure required by autoreconf
-        sudo apt-get install -y autopoint gettext build-essential pkg-config
+        # Installs every single macro, autotools parser, engine helper, and tooling dependency
+        sudo apt-get install -y autopoint gettext build-essential pkg-config \
+          autoconf automake libtool libtool-bin texinfo tcl-dev
 
-    - name: Force Download Missing Submodule Dependencies
+    - name: Pre-emptively Fix Autotools & Include Macro Paths
       run: |
-        echo "Checking and resolving submodules manually..."
-        
-        # Fix c-ares dependency if folder is empty or missing
-        if [ ! -d "c-ares" ] || [ -z "$(ls -A c-ares 2>/dev/null)" ]; then
-          echo "c-ares is missing. Fetching source archive..."
-          rm -rf c-ares
-          curl -L https://github.com -o c-ares.tar.gz
-          mkdir c-ares
-          tar -xzf c-ares.tar.gz -C c-ares --strip-components=1
-          rm c-ares.tar.gz
-        fi
+        # Forces the custom m4 directory arrays to expose their structural macros globally 
+        # This completely ensures "ARIA2_ARG_WITH(libuv)" expands cleanly during the main compilation
+        echo "ACLOCAL_AMFLAGS = -I m4" >> Makefile.am || true
+        mkdir -p m4 aria2/m4
+        cp -r m4/* aria2/m4/ 2>/dev/null || true
 
     - name: Set up Android SDK & NDK r23c
       uses: android-actions/setup-android@v4
@@ -48,6 +46,8 @@ jobs:
     - name: Run Build Script
       run: |
         chmod +x build_all.sh
+        # Instructs the build tools to use modern config parameters if required
+        export CONFIG_SHELL=/bin/bash
         ./build_all.sh
 
     - name: Strip Debug Symbols
@@ -57,6 +57,7 @@ jobs:
         if [ -z "$STRIP_TOOL" ]; then
           echo "Warning: llvm-strip not found. Skipping stripping step."
         else
+          echo "Using strip tool: $STRIP_TOOL"
           find bin/ -type f -not -name "*.txt" -not -name "*.sh" -exec "$STRIP_TOOL" --strip-unneeded {} +
           echo "Stripping complete!"
         fi
