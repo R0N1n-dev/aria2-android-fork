@@ -13,13 +13,16 @@ jobs:
       contents: write # Required permission for GitHub Actions to create a Release
 
     steps:
-    - name: Checkout repository with submodules
-      uses: actions/checkout@v7 # UPGRADED TO V7: Fully migrates the task to Node 24 to stop the error
-      with:
-        submodules: recursive
+    - name: Checkout repository
+      uses: actions/checkout@v4 # Reverted to valid v4 version
+
+    - name: Initialize and Update Submodules
+      run: |
+        # Manually force-initialize all submodules to avoid action parameter failures
+        git submodule update --init --recursive
 
     - name: Set up Android SDK & NDK r23c
-      uses: android-actions/setup-android@v4 # Uses Node 24 natively
+      uses: android-actions/setup-android@v4
       with:
         packages: 'ndk;23.1.7779620 platform-tools'
 
